@@ -1,0 +1,123 @@
+{
+  "_version": "1.65.0",
+  "sap.app": {
+    "id": "com.xcaret.regactivosfijosoff",
+    "type": "application",
+    "i18n": "i18n/i18n.properties",
+    "applicationVersion": {
+      "version": "0.0.1"
+    },
+    "title": "{{appTitle}}",
+    "description": "{{appDescription}}",
+    "resources": "resources.json",
+    "sourceTemplate": {
+      "id": "@sap/generator-fiori:basic",
+      "version": "1.18.0",
+      "toolsId": "90a49806-9593-48ea-960b-739d26c52e47"
+    },
+    "crossNavigation": {
+      "inbounds": {
+        "regactfijos-manage": {
+          "semanticObject": "regactfijosoff",
+          "action": "manage",
+          "title": "{{regactfijos-manage.flpTitle}}",
+          "subTitle": "{{regactfijos-manage.flpSubtitle}}",
+          "signature": {
+            "parameters": {},
+            "additionalParameters": "allowed"
+          }
+        }
+      }
+    }
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "icons": {
+      "icon": "",
+      "favIcon": "",
+      "phone": "",
+      "phone@2": "",
+      "tablet": "",
+      "tablet@2": ""
+    },
+    "deviceTypes": {
+      "desktop": true,
+      "tablet": true,
+      "phone": true
+    }
+  },
+  "sap.ui5": {
+    "flexEnabled": true,
+    "dependencies": {
+      "minUI5Version": "1.136.1",
+      "libs": {
+        "sap.m": {},
+        "sap.ui.core": {}
+      }
+    },
+    "contentDensities": {
+      "compact": true,
+      "cozy": true
+    },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": {
+          "bundleName": "com.xcaret.regactivosfijosoff.i18n.i18n"
+        }
+      }
+    },
+    "resources": {
+      "css": [
+        {
+          "uri": "css/style.css"
+        }
+      ]
+    },
+    "routing": {
+      "config": {
+        "routerClass": "sap.m.routing.Router",
+        "controlAggregation": "pages",
+        "controlId": "app",
+        "transition": "slide",
+        "type": "View",
+        "viewType": "XML",
+        "path": "com.xcaret.regactivosfijosoff.view",
+        "async": true,
+        "viewPath": "com.xcaret.regactivosfijosoff.view"
+      },
+      "routes": [
+        {
+          "pattern": "",
+          "name": "Main",
+          "target": "Main"
+        },
+        {
+          "pattern": "ObjectPage/{mode}/{objectId}",
+          "name": "ObjectPage",
+          "target": "ObjectPage"
+        }
+      ],
+      "targets": {
+        "Main": {
+          "viewName": "Main",
+          "viewLevel": 1
+        },
+        "ObjectPage": {
+          "viewName": "ObjectPage",
+          "viewLevel": 2
+        }
+      }
+    },
+    "rootView": {
+      "viewName": "com.xcaret.regactivosfijosoff.view.App",
+      "type": "XML",
+      "id": "App",
+      "async": true
+    }
+  },
+  "sap.cloud": {
+    "public": true,
+    "service": "comxcaretregactivosfijosoff"
+  }
+}

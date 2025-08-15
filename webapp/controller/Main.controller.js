@@ -73,9 +73,9 @@ sap.ui.define([
             // Aquí podrías sincronizar datos pendientes si lo deseas
             sap.m.MessageToast.show("Conectado. Sincronizando datos...");
             // indexedDBService.syncPendingOps(processFn);
-            this.syncPendingOps();
-            this.syncPendingImages();
-            //this.syncPendingSignatures();
+            
+            // ✅ SINCRONIZACIÓN INTELIGENTE - EVITAR DUPLICACIÓN
+            this._syncAllPendingData();
         },
 
         // Offline
@@ -193,6 +193,17 @@ sap.ui.define([
         syncPendingOps: async function () {
             sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], async function (indexedDBService) {
                 let pendingOps = await indexedDBService.getPendingOps();
+                
+                // ✅ FILTRAR OPERACIONES - EXCLUIR IMÁGENES (ya se procesan en syncPendingImages)
+                let nonImageOps = pendingOps.filter(op => op.type !== "Image");
+                
+                if (!nonImageOps || nonImageOps.length === 0) {
+                    console.log("📋 No hay operaciones pendientes (excluyendo imágenes)");
+                    return;
+                }
+                
+                console.log("🔄 Procesando operaciones pendientes (excluyendo imágenes):", nonImageOps.length);
+                
                 let successCount = 0, errorCount = 0;
         
                 // Helper para fecha actual en formato YYYY-MM-DD
@@ -203,7 +214,7 @@ sap.ui.define([
                         String(d.getDate()).padStart(2, "0");
                 }
         
-                for (let op of pendingOps) {
+                for (let op of nonImageOps) {
                     try {
                         if (op.opType === "create" || op.opType === "update" || op.opType === "delete") {
                             // Forzar BUDAT a la fecha de sincronización si corresponde
@@ -234,6 +245,11 @@ sap.ui.define([
                                 }
                             } else if (op.type === "Signature") {
                                 url = host + "/ImageSignItem";
+                            } else if (op.type === "Image") {
+                                // ✅ LAS IMÁGENES YA SE SINCRONIZAN EN syncPendingImages
+                                // NO procesar aquí para evitar duplicación
+                                console.log("🔄 Saltando operación de imagen (ya se sincroniza en syncPendingImages):", op.id);
+                                continue;
                             } else {
                                 url = host + "/" + op.type;
                             }
@@ -304,6 +320,47 @@ sap.ui.define([
             });
         },
 
+        // ✅ SINCRONIZACIÓN INTELIGENTE - COORDINA TODAS LAS OPERACIONES PENDIENTES
+        _syncAllPendingData: async function () {
+            console.log("🚀 _syncAllPendingData iniciado");
+            sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], async function (indexedDBService) {
+                try {
+                    // 1. Obtener todas las operaciones pendientes
+                    let pendingOps = await indexedDBService.getPendingOps();
+                    let pendingImages = await indexedDBService.getPendingImages();
+                    
+                    console.log("🔄 Iniciando sincronización inteligente...");
+                    console.log("📋 Operaciones pendientes:", pendingOps.length);
+                    console.log("📸 Imágenes pendientes:", pendingImages.length);
+                    
+                    // 2. SINCRONIZAR IMÁGENES PRIMERO (con URL correcta)
+                    if (pendingImages && pendingImages.length > 0) {
+                        console.log("🔄 Sincronizando imágenes...");
+                        await this.syncPendingImages();
+                    }
+                    
+                    // 3. SINCRONIZAR OTRAS OPERACIONES (excluyendo imágenes)
+                    let nonImageOps = pendingOps.filter(op => op.type !== "Image");
+                    if (nonImageOps && nonImageOps.length > 0) {
+                        console.log("🔄 Sincronizando otras operaciones:", nonImageOps.length);
+                        await this.syncPendingOps();
+                    }
+                    
+                    // 4. SINCRONIZAR FIRMAS SI ES NECESARIO
+                    let signatureOps = pendingOps.filter(op => op.type === "Signature");
+                    if (signatureOps && signatureOps.length > 0) {
+                        console.log("🔄 Sincronizando firmas:", signatureOps.length);
+                        await this.syncPendingSignatures();
+                    }
+                    
+                    console.log("✅ Sincronización inteligente completada");
+                    
+                } catch (error) {
+                    console.error("❌ Error en sincronización inteligente:", error);
+                }
+            }.bind(this));
+        },
+
         // Offline
         syncPendingImages: async function () {
             sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], async function (indexedDBService) {
@@ -352,6 +409,20 @@ sap.ui.define([
 
                         if (response.ok) {
                             await indexedDBService.markImageAsSynced(img.id || img.IMAGE_NAME);
+                            
+                            // ✅ ELIMINAR OPERACIÓN PENDIENTE CORRESPONDIENTE
+                            // Buscar y eliminar la operación pendiente de tipo "Image" para esta imagen
+                            let pendingOps = await indexedDBService.getPendingOps();
+                            let imageOp = pendingOps.find(op => 
+                                op.type === "Image" && 
+                                op.data && 
+                                op.data.IMAGE_NAME === img.IMAGE_NAME
+                            );
+                            if (imageOp) {
+                                await indexedDBService.deletePendingOp(imageOp.id);
+                                console.log("🗑️ Operación pendiente eliminada para imagen:", img.IMAGE_NAME);
+                            }
+                            
                             successCount++;
                         } else {
                             errorCount++;

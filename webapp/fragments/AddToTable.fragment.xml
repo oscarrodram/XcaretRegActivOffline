@@ -38,10 +38,12 @@
                         <Label text="{i18n>PHOTOACT}" />
                         <TextArea id="photoInputActFijo" value="" enabled="{globalModelNoEditables>/enableds}" layoutData="{path:'', formatter: function() { return new sap.ui.layout.GridData({span: 'XL3 L3 M3 S3'}); }}" />
                         <Button icon="sap-icon://add-photo" enabled="{globalModelNoEditables>/enableds}" press="onCapturePhotoActFijo" type="Emphasized" layoutData="{path:'', formatter: function() { return new sap.ui.layout.GridData({span: 'XL1 L1 M1 S1'}); }}" />
+                        <Button icon="sap-icon://image-viewer" enabled="true" press="onSeePhotoActFijo" type="Emphasized" layoutData="{path:'', formatter: function() { return new sap.ui.layout.GridData({span: 'XL1 L1 M1 S1'}); }}" />
 
                         <Label text="{i18n>PHOTOSER}" />
                         <TextArea id="photoInputSerie" value="" enabled="{globalModelNoEditables>/enableds}" layoutData="{path:'', formatter: function() { return new sap.ui.layout.GridData({span: 'XL3 L3 M3 S3'}); }}" />
                         <Button icon="sap-icon://add-photo" enabled="{globalModelNoEditables>/enableds}" press="onCapturePhotoSerie" type="Emphasized" layoutData="{path:'', formatter: function() { return new sap.ui.layout.GridData({span: 'XL1 L1 M1 S1'}); }}" />
+                        <Button icon="sap-icon://image-viewer" enabled="true" press="onSeePhotoSerie" type="Emphasized" layoutData="{path:'', formatter: function() { return new sap.ui.layout.GridData({span: 'XL1 L1 M1 S1'}); }}" />
                                        
                     </f:content>
                 </f:SimpleForm>

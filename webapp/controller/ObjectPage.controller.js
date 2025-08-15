@@ -187,12 +187,29 @@ sap.ui.define([
                     console.warn(`No se pudo cargar el fragmento ${frag.DialogID}:`, e);
                 }
             }
+
+            // ==== Event listeners para detectar cambios de conectividad ====
+            this.bIsOnline = window.navigator.onLine;
+            window.addEventListener("online", this._handleOnline.bind(this));
+            window.addEventListener("offline", this._handleOffline.bind(this));
         },
 
         onAfterRendering: function () {
             let sNameComplete = sFName + " " + sLName;
             var sVn = this.getView().byId("titleName");
             sVn.setText(sNameComplete);
+        },
+
+        // Offline - Manejo de cambios de conectividad
+        _handleOnline: function () {
+            this.bIsOnline = true;
+            sap.m.MessageToast.show("Conectado. Sincronizando imágenes...");
+            // La sincronización se maneja desde Main.controller
+        },
+
+        _handleOffline: function () {
+            this.bIsOnline = false;
+            sap.m.MessageToast.show("Sin conexión. Trabajando en modo offline.");
         },
         /*
         _onObjectMatched: function (oEvent) {
@@ -3948,7 +3965,7 @@ sap.ui.define([
             });
         },
         */
-        // Offline
+        // ✅ MÉTODO ACTUALIZADO - SIN CORDOVA, SOLO WEB APIs
         onUploadPhotos: function (sMBLRN) {
             const that = this;
 
@@ -3968,23 +3985,23 @@ sap.ui.define([
             if (!window.navigator.onLine) {
                 sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
                     aNewImages.forEach(function (imgData, index) {
-                        // Leer el archivo real para convertirlo a base64
-                        imgData.fileEntry.file(function (realFile) {
+                        // ✅ USAR imgData.file en lugar de imgData.fileEntry
+                        if (imgData.file) {
                             const reader = new FileReader();
                             reader.onloadend = function () {
                                 // Convertir a base64
-                                const base64 = btoa(String.fromCharCode.apply(null, new Uint8Array(reader.result)));
+                                const base64 = reader.result.split(',')[1];
                                 // Guardar imagen en IndexedDB
                                 const imageObj = {
                                     MBLRN: sMBLRN,
                                     LINE_ID: imgData.pos,
                                     INDEX: imgData.index,
-                                    IMAGE_NAME: realFile.name || ("CAPTURA" + (index + 1)),
-                                    mimeType: realFile.type || "image/jpeg",
+                                    IMAGE_NAME: imgData.filename || ("CAPTURA" + (index + 1)),
+                                    mimeType: imgData.file.type || "image/jpeg",
                                     data: base64,
                                     pending: true,
                                     source: imgData.source || "camera",
-                                    id: sMBLRN + "_" + imgData.pos + "_" + (realFile.name || ("CAPTURA" + (index + 1)))
+                                    id: sMBLRN + "_" + imgData.pos + "_" + (imgData.filename || ("CAPTURA" + (index + 1)))
                                 };
                                 indexedDBService.saveImage(imageObj);
                                 indexedDBService.addPendingOp({
@@ -3997,10 +4014,10 @@ sap.ui.define([
                                 // Marcar como ya guardada localmente
                                 imgData.ind = "e";
                             };
-                            reader.readAsArrayBuffer(realFile);
-                        }, function (error) {
-                            console.error("Error al leer archivo:", error);
-                        });
+                            reader.readAsDataURL(imgData.file);
+                        } else {
+                            console.error("No se encontró archivo para la imagen:", imgData);
+                        }
                     });
                     sap.m.MessageToast.show("Imágenes guardadas offline. Se sincronizarán automáticamente.");
                 });
@@ -4013,49 +4030,69 @@ sap.ui.define([
             let pending = aNewImages.length;
 
             aNewImages.forEach(function (imgData, index) {
-                imgData.fileEntry.file(function (realFile) {
-                    const reader = new FileReader();
+                // ✅ USAR imgData.file en lugar de imgData.fileEntry
+                if (imgData.file) {
+                    formData.append("image", imgData.file, imgData.filename);
 
-                    reader.onloadend = function () {
-                        const blob = new Blob([new Uint8Array(reader.result)], { type: realFile.type });
+                    metadataArray.push({
+                        MBLRN: sMBLRN,
+                        LINE_ID: imgData.pos,
+                        INDEX: imgData.index,
+                        IMAGE_NAME: imgData.filename || ("CAPTURA" + (index + 1))
+                    });
 
-                        formData.append("image", blob, realFile.name);
-
-                        metadataArray.push({
-                            MBLRN: sMBLRN,
-                            LINE_ID: imgData.pos,
-                            INDEX: imgData.index,
-                            IMAGE_NAME: realFile.name || ("CAPTURA" + (index + 1))
-                        });
-
-                        pending--;
-
-                        if (pending === 0) {
-                            formData.append("metadata", JSON.stringify(metadataArray));
-
-                            $.ajax({
-                                url: host + "/ImageMaterialReceptionItem",
-                                type: "POST",
-                                data: formData,
-                                async: false,
-                                processData: false,
-                                contentType: false,
-                                success: function (response) {
-                                    console.log("Fotos subidas correctamente");
-                                    aNewImages.forEach(img => img.ind = 'e');
-                                },
-                                error: function (xhr, status, error) {
-                                    console.error("Error al subir fotos:", status, error);
-                                }
-                            });
-                        }
-                    };
-
-                    reader.readAsArrayBuffer(realFile);
-                }, function (error) {
-                    console.error("Error al leer archivo:", error);
                     pending--;
-                });
+
+                    if (pending === 0) {
+                        formData.append("metadata", JSON.stringify(metadataArray));
+
+                        // ✅ USAR fetch en lugar de $.ajax
+                        fetch(host + "/ImageMaterialReceptionItem", {
+                            method: "POST",
+                            body: formData
+                        }).then(response => {
+                            if (response.ok) {
+                                console.log("Fotos subidas correctamente");
+                                aNewImages.forEach(img => img.ind = 'e');
+                            } else {
+                                throw new Error("Error en la respuesta del servidor");
+                            }
+                        }).catch(error => {
+                            console.error("Error al subir fotos:", error);
+                            // Si falla, guardar offline
+                            sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                                aNewImages.forEach(function (imgData, index) {
+                                    if (imgData.file) {
+                                        const reader = new FileReader();
+                                        reader.onloadend = function () {
+                                            const base64 = reader.result.split(',')[1];
+                                            const imageObj = {
+                                                MBLRN: sMBLRN,
+                                                LINE_ID: imgData.pos,
+                                                INDEX: imgData.index,
+                                                IMAGE_NAME: imgData.filename || ("CAPTURA" + (index + 1)),
+                                                mimeType: imgData.file.type || "image/jpeg",
+                                                data: base64,
+                                                pending: true,
+                                                source: imgData.source || "camera",
+                                                id: sMBLRN + "_" + imgData.pos + "_" + (imgData.filename || ("CAPTURA" + (index + 1)))
+                                            };
+                                            indexedDBService.saveImage(imageObj);
+                                        };
+                                        reader.readAsDataURL(imgData.file);
+                                        pending--;
+                                    } else {
+                                        console.error("No se encontró archivo para la imagen:", imgData);
+                                        pending--;
+                                    }
+                                });
+                            });
+                        });
+                    }
+                } else {
+                    console.error("No se encontró archivo para la imagen:", imgData);
+                    pending--;
+                }
             });
         },
         /*
@@ -5631,24 +5668,234 @@ sap.ui.define([
             var sTitlePos = oBuni18n.getText("titlePos") + " ";
             var sIndex = sTitle.split(sTitlePos)[1].split(" / ")[0];
             var sPosition = sTitle.split(sTitlePos)[1].split(" / ")[1];
-            var that = this; // Guardamos el contexto del controlador
             var oInputActFijo = sap.ui.core.Fragment.byId(sFragmentId, "photoInputActFijo");
-            var oInputSerie = sap.ui.core.Fragment.byId(sFragmentId, "photoInputSerie");
 
-            if (window.MLKitOCR) {
-                window.MLKitOCR.scanTextFromImage(
-                    function (text) {
-                        sap.m.MessageToast.show("Texto detectado");
-                        oInputActFijo.setValue(text);
-                        that.onChangeRow();
-                    },
-                    function (err) {
-                        console.error("OCR error:", err);
-                    }
-                );
-            } else {
-                console.error("OCR no disponible");
-            }
+            // Crear diálogo de cámara para activo fijo
+            var oCamDialog = new sap.m.Dialog({
+                title: "Capturar Foto del Activo Fijo",
+                contentWidth: "90%",
+                contentHeight: "70%",
+                content: [
+                    new sap.m.VBox({
+                        alignItems: "Center",
+                        justifyContent: "Center",
+                        items: [
+                            new sap.m.HBox({
+                                alignItems: "Center",
+                                justifyContent: "Center",
+                                items: [
+                                    new sap.m.Button({
+                                        icon: "sap-icon://camera",
+                                        text: "Capturar",
+                                        type: "Emphasized",
+                                        press: function () {
+                                            var video = document.getElementById('camera-video-activo');
+                                            if (video && video.srcObject) {
+                                                var canvas = document.createElement('canvas');
+                                                canvas.width = video.videoWidth;
+                                                canvas.height = video.videoHeight;
+                                                var ctx = canvas.getContext('2d');
+                                                ctx.drawImage(video, 0, 0);
+                                                
+                                                canvas.toBlob(function (blob) {
+                                                    var capturedFile = new File([blob], "ACTIVO_FIJO_" + Date.now() + ".jpg", { type: "image/jpeg" });
+                                                    
+                                                    // 1. ✅ OBTENER ÍNDICE ÚNICO ANTES DE AGREGAR A LA VISTA
+                                                    let existingImageIndex = that.getMaxIndexImage(that._aImageSource.filter(img => img.pos === sPosition));
+                                                    let newIndex = existingImageIndex;
+                                                    
+                                                    // 1. Agregar a la vista local
+                                                    that._aImageSource.push({
+                                                        pos: sPosition,
+                                                        src: URL.createObjectURL(blob),
+                                                        file: capturedFile,
+                                                        filename: capturedFile.name,
+                                                        ind: 'n',
+                                                        index: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                        source: "camera_activo_fijo",
+                                                        type: "ACTIVO_FIJO"
+                                                    });
+
+                                                    // 2. ✅ LÓGICA HÍBRIDA: ONLINE DIRECTO AL BACKEND, OFFLINE EN INDEXEDDB
+                                                    if (!window.navigator.onLine) {
+                                                        // --- MODO OFFLINE ---
+                                                        sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                                                            let reader = new FileReader();
+                                                            reader.onloadend = function () {
+                                                                let base64 = reader.result.split(',')[1];
+                                                                let sMBLRN = that.sObjMBLRN || "TEMP_" + Date.now();
+                                                                
+                                                                // ✅ GUARDAR IMAGEN EN INDEXEDDB
+                                                                indexedDBService.saveImage({
+                                                                    MBLRN: sMBLRN,
+                                                                    LINE_ID: sPosition,
+                                                                    IMAGE_NAME: capturedFile.name,
+                                                                    data: base64,
+                                                                    mimeType: capturedFile.type,
+                                                                    pending: true,
+                                                                    timestamp: Date.now(),
+                                                                    index: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                    imageType: "ACTIVO_FIJO"
+                                                                });
+
+                                                                // ✅ AGREGAR A OPERACIONES PENDIENTES
+                                                                indexedDBService.addPendingOp({
+                                                                    id: sMBLRN + "_" + sPosition + "_" + capturedFile.name,
+                                                                    type: "Image",
+                                                                    data: {
+                                                                        MBLRN: sMBLRN,
+                                                                        LINE_ID: sPosition,
+                                                                        INDEX: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                        IMAGE_NAME: capturedFile.name,
+                                                                        IMAGE_TYPE: "ACTIVO_FIJO"
+                                                                    },
+                                                                    opType: "create",
+                                                                    timestamp: Date.now()
+                                                                });
+                                                            };
+                                                            reader.readAsDataURL(capturedFile);
+                                                        });
+                                                        sap.m.MessageToast.show("Foto guardada offline. Se sincronizará al volver online.");
+                                                    } else {
+                                                        // --- MODO ONLINE ---
+                                                        try {
+                                                            // ✅ VERIFICAR SI YA EXISTE UNA IMAGEN EN ESTA POSICIÓN
+                                                            let existingImageIndex = that.getMaxIndexImage(that._aImageSource.filter(img => img.pos === sPosition));
+                                                            let newIndex = existingImageIndex;
+                                                            
+                                                            // ✅ SUBIR DIRECTAMENTE AL BACKEND CON ÍNDICE ÚNICO
+                                                            let formData = new FormData();
+                                                            formData.append("image", capturedFile, capturedFile.name);
+                                                            formData.append("metadata", JSON.stringify([{
+                                                                MBLRN: that.sObjMBLRN || "TEMP_" + Date.now(),
+                                                                LINE_ID: sPosition,
+                                                                INDEX: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                IMAGE_NAME: capturedFile.name,
+                                                                IMAGE_TYPE: "ACTIVO_FIJO"
+                                                            }]));
+
+                                                            fetch(host + "/ImageMaterialReceptionItem", {
+                                                                method: "POST",
+                                                                body: formData
+                                                            }).then(response => {
+                                                                if (response.ok) {
+                                                                    sap.m.MessageToast.show("Foto subida al servidor correctamente.");
+                                                                    // ✅ ACTUALIZAR EL ÍNDICE EN LA VISTA LOCAL
+                                                                    that._aImageSource[that._aImageSource.length - 1].index = newIndex;
+                                                                    capturedFile.synced = true;
+                                                                } else {
+                                                                    throw new Error("Error en la respuesta del servidor");
+                                                                }
+                                                            }).catch(error => {
+                                                                console.error("Error al subir foto:", error);
+                                                                sap.m.MessageToast.show("Error al subir foto. Guardando offline...");
+                                                                
+                                                                // ✅ SI FALLA LA SUBIDA, GUARDAR OFFLINE COMO FALLBACK
+                                                                sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                                                                    let reader = new FileReader();
+                                                                    reader.onloadend = function () {
+                                                                        let base64 = reader.result.split(',')[1];
+                                                                        let sMBLRN = that.sObjMBLRN || "TEMP_" + Date.now();
+                                                                        indexedDBService.saveImage({
+                                                                            MBLRN: sMBLRN,
+                                                                            LINE_ID: sPosition,
+                                                                            IMAGE_NAME: capturedFile.name,
+                                                                            data: base64,
+                                                                            mimeType: capturedFile.type,
+                                                                            pending: true,
+                                                                            timestamp: Date.now(),
+                                                                            index: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                            imageType: "ACTIVO_FIJO"
+                                                                        });
+                                                                        
+                                                                        // ✅ AGREGAR A OPERACIONES PENDIENTES
+                                                                        indexedDBService.addPendingOp({
+                                                                            id: sMBLRN + "_" + sPosition + "_" + capturedFile.name,
+                                                                            type: "Image",
+                                                                            data: {
+                                                                                MBLRN: sMBLRN,
+                                                                                LINE_ID: sPosition,
+                                                                                INDEX: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                                IMAGE_NAME: capturedFile.name,
+                                                                                IMAGE_TYPE: "ACTIVO_FIJO"
+                                                                            },
+                                                                            opType: "create",
+                                                                            timestamp: Date.now()
+                                                                        });
+                                                                    };
+                                                                    reader.readAsDataURL(capturedFile);
+                                                                });
+                                                            });
+                                                        } catch (error) {
+                                                            console.error("Error en modo online:", error);
+                                                            sap.m.MessageToast.show("Error en modo online. Guardando offline...");
+                                                        }
+                                                    }
+
+                                                    // 3. ✅ NO ACTUALIZAR EL INPUT - SOLO CAPTURAR FOTO
+                                                    // oInputActFijo.setValue(capturedFile.name); // ❌ ELIMINADO
+                                                    that.onChangeRow();
+
+                                                    // ✅ MENSAJE YA SE MOSTRÓ ARRIBA SEGÚN CONECTIVIDAD
+
+                                                    // Detén la cámara para liberar recursos
+                                                    if (video.srcObject) {
+                                                        video.srcObject.getTracks().forEach(t => t.stop());
+                                                    }
+
+                                                    oCamDialog.close();
+                                                    oCamDialog.destroy();
+                                                }, 'image/jpeg', 0.9);
+                                            }
+                                        }
+                                    })
+                                ]
+                            }),
+                            new sap.m.HBox({
+                                alignItems: "Center",
+                                justifyContent: "Center",
+                                items: [
+                                    new sap.ui.core.HTML({
+                                        content: '<video id="camera-video-activo" autoplay style="width: 100%; max-width: 400px; border: 1px solid #ccc;"></video>'
+                                    })
+                                ]
+                            })
+                        ]
+                    })
+                ],
+                buttons: [
+                    new sap.m.Button({
+                        text: "Cancelar",
+                        press: function () {
+                            if (video.srcObject) {
+                                video.srcObject.getTracks().forEach(t => t.stop());
+                            }
+                            oCamDialog.close();
+                            oCamDialog.destroy();
+                        }
+                    })
+                ]
+            });
+
+            // Inicializar cámara cuando se abra el diálogo
+            oCamDialog.attachAfterOpen(function () {
+                var video = document.getElementById('camera-video-activo');
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    navigator.mediaDevices.getUserMedia({ video: true })
+                        .then(function (stream) {
+                            video.srcObject = stream;
+                        })
+                        .catch(function (err) {
+                            console.error("Error al acceder a la cámara:", err);
+                            sap.m.MessageToast.show("Error al acceder a la cámara");
+                        });
+                } else {
+                    sap.m.MessageToast.show("Cámara no disponible en este dispositivo");
+                }
+            });
+
+            this.getView().addDependent(oCamDialog);
+            oCamDialog.open();
         },
 
         onCapturePhotoSerie: function (oEvent) {
@@ -5659,66 +5906,237 @@ sap.ui.define([
             var sTitlePos = oBuni18n.getText("titlePos") + " ";
             var sIndex = sTitle.split(sTitlePos)[1].split(" / ")[0];
             var sPosition = sTitle.split(sTitlePos)[1].split(" / ")[1];
-            var that = this; // Guardamos el contexto del controlador
             var oInputSerie = sap.ui.core.Fragment.byId(sFragmentId, "photoInputSerie");
 
-            if (window.MLKitOCR) {
-                window.MLKitOCR.scanTextFromImage(
-                    function (text) {
-                        sap.m.MessageToast.show("Texto detectado");
-                        oInputSerie.setValue(text);
-                        that.onChangeRow();
-                    },
-                    function (err) {
-                        console.error("OCR error:", err);
-                    }
-                );
-            } else {
-                console.error("OCR no disponible");
-            }
-        },
+            // Crear diálogo de cámara para serie
+            var oCamDialog = new sap.m.Dialog({
+                title: "Capturar Foto de la Serie",
+                contentWidth: "90%",
+                contentHeight: "70%",
+                content: [
+                    new sap.m.VBox({
+                        alignItems: "Center",
+                        justifyContent: "Center",
+                        items: [
+                            new sap.m.HBox({
+                                alignItems: "Center",
+                                justifyContent: "Center",
+                                items: [
+                                    new sap.m.Button({
+                                        icon: "sap-icon://camera",
+                                        text: "Capturar",
+                                        type: "Emphasized",
+                                        press: function () {
+                                            var video = document.getElementById('camera-video-serie');
+                                            if (video && video.srcObject) {
+                                                var canvas = document.createElement('canvas');
+                                                canvas.width = video.videoWidth;
+                                                canvas.height = video.videoHeight;
+                                                var ctx = canvas.getContext('2d');
+                                                ctx.drawImage(video, 0, 0);
+                                                
+                                                canvas.toBlob(function (blob) {
+                                                    var capturedFile = new File([blob], "SERIE_" + Date.now() + ".jpg", { type: "image/jpeg" });
+                                                    
+                                                    // 1. ✅ OBTENER ÍNDICE ÚNICO ANTES DE AGREGAR A LA VISTA
+                                                    let existingImageIndex = that.getMaxIndexImage(that._aImageSource.filter(img => img.pos === sPosition));
+                                                    let newIndex = existingImageIndex;
+                                                    
+                                                    // 1. Agregar a la vista local
+                                                    that._aImageSource.push({
+                                                        pos: sPosition,
+                                                        src: URL.createObjectURL(blob),
+                                                        file: capturedFile,
+                                                        filename: capturedFile.name,
+                                                        ind: 'n',
+                                                        index: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                        source: "camera_serie",
+                                                        type: "SERIE"
+                                                    });
 
-        onCapturePhoto: function (oEvent) {
-            var that = this;
-            var sFragmentId = this.createId("myDialog");
-            var oDialog = sap.ui.core.Fragment.byId(sFragmentId, "myDialog");
-            var sTitle = oDialog.getTitle();
-            var sTitlePos = oBuni18n.getText("titlePos") + " ";
-            var sPosition = sTitle.split(sTitlePos)[1];
-            var iIndex = this.getIndexByPos(sPosition);
+                                                    // 2. ✅ LÓGICA HÍBRIDA: ONLINE DIRECTO AL BACKEND, OFFLINE EN INDEXEDDB
+                                                    if (!window.navigator.onLine) {
+                                                        // --- MODO OFFLINE ---
+                                                        sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                                                            let reader = new FileReader();
+                                                            reader.onloadend = function () {
+                                                                let base64 = reader.result.split(',')[1];
+                                                                let sMBLRN = that.sObjMBLRN || "TEMP_" + Date.now();
+                                                                
+                                                                // ✅ GUARDAR IMAGEN EN INDEXEDDB
+                                                                indexedDBService.saveImage({
+                                                                    MBLRN: sMBLRN,
+                                                                    LINE_ID: sPosition,
+                                                                    IMAGE_NAME: capturedFile.name,
+                                                                    data: base64,
+                                                                    mimeType: capturedFile.type,
+                                                                    pending: true,
+                                                                    timestamp: Date.now(),
+                                                                    index: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                    imageType: "SERIE"
+                                                                });
 
-            navigator.camera.getPicture(
-                function (imageURI) {
-                    window.resolveLocalFileSystemURL(imageURI, function (fileEntry) {
-                        // Guarda el FileEntry, no el File
-                        that._aImageSource.push({
-                            pos: sPosition,
-                            src: imageURI,
-                            fileEntry: fileEntry,
-                            filename: fileEntry.name,
-                            index: iIndex,
-                            ind: "n" // nueva imagen
+                                                                // ✅ AGREGAR A OPERACIONES PENDIENTES
+                                                                indexedDBService.addPendingOp({
+                                                                    id: sMBLRN + "_" + sPosition + "_" + capturedFile.name,
+                                                                    type: "Image",
+                                                                    data: {
+                                                                        MBLRN: sMBLRN,
+                                                                        LINE_ID: sPosition,
+                                                                        INDEX: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                        IMAGE_NAME: capturedFile.name,
+                                                                        IMAGE_TYPE: "SERIE"
+                                                                    },
+                                                                    opType: "create",
+                                                                    timestamp: Date.now()
+                                                                });
+                                                            };
+                                                            reader.readAsDataURL(capturedFile);
+                                                        });
+                                                        sap.m.MessageToast.show("Foto guardada offline. Se sincronizará al volver online.");
+                                                    } else {
+                                                        // --- MODO ONLINE ---
+                                                        try {
+                                                            // ✅ VERIFICAR SI YA EXISTE UNA IMAGEN EN ESTA POSICIÓN
+                                                            let existingImageIndex = that.getMaxIndexImage(that._aImageSource.filter(img => img.pos === sPosition));
+                                                            let newIndex = existingImageIndex;
+                                                            
+                                                            // ✅ SUBIR DIRECTAMENTE AL BACKEND CON ÍNDICE ÚNICO
+                                                            let formData = new FormData();
+                                                            formData.append("image", capturedFile, capturedFile.name);
+                                                            formData.append("metadata", JSON.stringify([{
+                                                                MBLRN: that.sObjMBLRN || "TEMP_" + Date.now(),
+                                                                LINE_ID: sPosition,
+                                                                INDEX: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                IMAGE_NAME: capturedFile.name,
+                                                                IMAGE_TYPE: "SERIE"
+                                                            }]));
+
+                                                            fetch(host + "/ImageMaterialReceptionItem", {
+                                                                method: "POST",
+                                                                body: formData
+                                                            }).then(response => {
+                                                                if (response.ok) {
+                                                                    sap.m.MessageToast.show("Foto subida al servidor correctamente.");
+                                                                    // ✅ ACTUALIZAR EL ÍNDICE EN LA VISTA LOCAL
+                                                                    that._aImageSource[that._aImageSource.length - 1].index = newIndex;
+                                                                    capturedFile.synced = true;
+                                                                } else {
+                                                                    throw new Error("Error en la respuesta del servidor");
+                                                                }
+                                                            }).catch(error => {
+                                                                console.error("Error al subir foto:", error);
+                                                                sap.m.MessageToast.show("Error al subir foto. Guardando offline...");
+                                                                
+                                                                // ✅ SI FALLA LA SUBIDA, GUARDAR OFFLINE COMO FALLBACK
+                                                                sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                                                                    let reader = new FileReader();
+                                                                    reader.onloadend = function () {
+                                                                        let base64 = reader.result.split(',')[1];
+                                                                        let sMBLRN = that.sObjMBLRN || "TEMP_" + Date.now();
+                                                                        indexedDBService.saveImage({
+                                                                            MBLRN: sMBLRN,
+                                                                            LINE_ID: sPosition,
+                                                                            IMAGE_NAME: capturedFile.name,
+                                                                            data: base64,
+                                                                            mimeType: capturedFile.type,
+                                                                            pending: true,
+                                                                            timestamp: Date.now(),
+                                                                            index: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                            imageType: "SERIE"
+                                                                        });
+                                                                        
+                                                                        // ✅ AGREGAR A OPERACIONES PENDIENTES
+                                                                        indexedDBService.addPendingOp({
+                                                                            id: sMBLRN + "_" + sPosition + "_" + capturedFile.name,
+                                                                            type: "Image",
+                                                                            data: {
+                                                                                MBLRN: sMBLRN,
+                                                                                LINE_ID: sPosition,
+                                                                                INDEX: newIndex, // ✅ USAR ÍNDICE ÚNICO
+                                                                            IMAGE_NAME: capturedFile.name,
+                                                                            IMAGE_TYPE: "SERIE"
+                                                                            },
+                                                                            opType: "create",
+                                                                            timestamp: Date.now()
+                                                                        });
+                                                                    };
+                                                                    reader.readAsDataURL(capturedFile);
+                                                                });
+                                                            });
+                                                        } catch (error) {
+                                                            console.error("Error en modo online:", error);
+                                                            sap.m.MessageToast.show("Error en modo online. Guardando offline...");
+                                                        }
+                                                    }
+
+                                                    // 3. ✅ NO ACTUALIZAR EL INPUT - SOLO CAPTURAR FOTO
+                                                    // oInputSerie.setValue(capturedFile.name); // ❌ ELIMINADO
+                                                    that.onChangeRow();
+
+                                                    // ✅ MENSAJE YA SE MOSTRÓ ARRIBA SEGÚN CONECTIVIDAD
+
+                                                    // Detén la cámara para liberar recursos
+                                                    if (video.srcObject) {
+                                                        video.srcObject.getTracks().forEach(t => t.stop());
+                                                    }
+
+                                                    oCamDialog.close();
+                                                    oCamDialog.destroy();
+                                                }, 'image/jpeg', 0.9);
+                                            }
+                                        }
+                                    })
+                                ]
+                            }),
+                            new sap.m.HBox({
+                                alignItems: "Center",
+                                justifyContent: "Center",
+                                items: [
+                                    new sap.ui.core.HTML({
+                                        content: '<video id="camera-video-serie" autoplay style="width: 100%; max-width: 400px; border: 1px solid #ccc;"></video>'
+                                    })
+                                ]
+                            })
+                        ]
+                    })
+                ],
+                buttons: [
+                    new sap.m.Button({
+                        text: "Cancelar",
+                        press: function () {
+                            if (video.srcObject) {
+                                video.srcObject.getTracks().forEach(t => t.stop());
+                            }
+                            oCamDialog.close();
+                            oCamDialog.destroy();
+                        }
+                    })
+                ]
+            });
+
+            // Inicializar cámara cuando se abra el diálogo
+            oCamDialog.attachAfterOpen(function () {
+                var video = document.getElementById('camera-video-serie');
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    navigator.mediaDevices.getUserMedia({ video: true })
+                        .then(function (stream) {
+                            video.srcObject = stream;
+                        })
+                        .catch(function (err) {
+                            console.error("Error al acceder a la cámara:", err);
+                            sap.m.MessageToast.show("Error al acceder a la cámara");
                         });
-
-                        sap.m.MessageToast.show("Foto agregada: " + fileEntry.name);
-                    }, function (err) {
-                        console.error("Error al resolver la URI:", err);
-                    });
-                },
-                function (error) {
-                    console.error("Error al tomar la foto:", error);
-                },
-                {
-                    quality: 70,
-                    destinationType: Camera.DestinationType.FILE_URI,
-                    sourceType: Camera.PictureSourceType.CAMERA,
-                    encodingType: Camera.EncodingType.JPEG,
-                    mediaType: Camera.MediaType.PICTURE,
-                    saveToPhotoAlbum: false,
-                    correctOrientation: true
+                } else {
+                    sap.m.MessageToast.show("Cámara no disponible en este dispositivo");
                 }
-            );
+            });
+
+            this.getView().addDependent(oCamDialog);
+            oCamDialog.open();
         },
+
+
 
         getIndexByPos: function (sPosition) {
             var aData = this._aImageSource.filter(oItem => oItem.pos === sPosition);
@@ -5731,11 +6149,213 @@ sap.ui.define([
                 return iIndex; // No hay imágenes
             }
 
-            var oLine = aData.reduce(function (maxObj, current) {
-                return current.index > maxObj.index ? current : maxObj;
+            // ✅ BUSCAR EL ÍNDICE MÁXIMO DE LAS IMÁGENES EXISTENTES
+            var maxIndex = 0;
+            aData.forEach(function(item) {
+                if (item.index && !isNaN(parseInt(item.index))) {
+                    var currentIndex = parseInt(item.index);
+                    if (currentIndex > maxIndex) {
+                        maxIndex = currentIndex;
+                    }
+                }
             });
-            return oLine.index + 1;
+            
+            return (maxIndex + 1).toString(); // ✅ RETORNAR COMO STRING
         },
+
+        // ❌ MÉTODO COMENTADO - NO SE UTILIZA EN LA INTERFAZ
+        // RAZÓN: Funcionalidad duplicada con onCapturePhotoActFijo y onCapturePhotoSerie
+        // Se mantiene comentado por si se necesita en el futuro, pero no está conectado a ningún botón
+        /*
+        onTakePhoto: function () {
+            var that = this;
+            var sFragmentId = this.createId("myDialog");
+            var oDialog = sap.ui.core.Fragment.byId(sFragmentId, "myDialog");
+            var sTitle = oDialog.getTitle();
+            var sTitlePos = oBuni18n.getText("titlePos") + " ";
+            var sPosition = sTitle.split(sTitlePos)[1];
+            var index = this.getIndexByPos(sPosition);
+
+            // Crear diálogo de cámara
+            var oCamDialog = new sap.m.Dialog({
+                title: "Capturar Foto",
+                contentWidth: "90%",
+                contentHeight: "70%",
+                content: [
+                    new sap.m.VBox({
+                        alignItems: "Center",
+                        justifyContent: "Center",
+                        items: [
+                            new sap.m.HBox({
+                                alignItems: "Center",
+                                justifyContent: "Center",
+                                items: [
+                                    new sap.m.Button({
+                                        icon: "sap-icon://camera",
+                                        text: "Capturar",
+                                        type: "Emphasized",
+                                        press: function () {
+                                            var video = document.getElementById('camera-video');
+                                            if (video && video.srcObject) {
+                                                var canvas = document.createElement('canvas');
+                                                canvas.width = video.videoWidth;
+                                                canvas.height = video.videoHeight;
+                                                var ctx = canvas.getContext('2d');
+                                                ctx.drawImage(video, 0, 0);
+                                                
+                                                canvas.toBlob(function (blob) {
+                                                    var capturedFile = new File([blob], "CAPTURA_" + Date.now() + ".jpg", { type: "image/jpeg" });
+                                                    
+                                                    // 1. Agregar a la vista local
+                                                    that._aImageSource.push({
+                                                        pos: sPosition,
+                                                        src: URL.createObjectURL(blob),
+                                                        file: capturedFile,
+                                                        filename: capturedFile.name,
+                                                        ind: 'n',
+                                                        index: index,
+                                                        source: "camera"
+                                                    });
+
+                                                    // 2. Manejo híbrido online/offline
+                                                    if (!window.navigator.onLine) {
+                                                        // --- MODO OFFLINE ---
+                                                        sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                                                            let reader = new FileReader();
+                                                            reader.onloadend = function () {
+                                                                let base64 = reader.result.split(',')[1];
+                                                                let sMBLRN = that.sObjMBLRN || "TEMP_" + Date.now();
+                                                                indexedDBService.saveImage({
+                                                                    MBLRN: sMBLRN,
+                                                                    LINE_ID: sPosition,
+                                                                    IMAGE_NAME: capturedFile.name,
+                                                                    data: base64,
+                                                                    mimeType: capturedFile.type,
+                                                                    pending: true,
+                                                                    timestamp: Date.now(),
+                                                                    index: index
+                                                                });
+                                                            };
+                                                            reader.readAsDataURL(capturedFile);
+                                                        });
+                                                        sap.m.MessageToast.show("Foto guardada offline. Se sincronizará al volver online.");
+                                                    } else {
+                                                        // --- MODO ONLINE ---
+                                                        try {
+                                                            // Crear FormData para subir al backend
+                                                            let formData = new FormData();
+                                                            formData.append("image", capturedFile, capturedFile.name);
+                                                            formData.append("metadata", JSON.stringify([{
+                                                                MBLRN: that.sObjMBLRN || "TEMP_" + Date.now(),
+                                                                LINE_ID: sPosition,
+                                                                INDEX: index,
+                                                                IMAGE_NAME: capturedFile.name
+                                                            }]));
+
+                                                            // Subir al backend
+                                                            fetch(host + "/ImageMaterialReceptionItem", {
+                                                                method: "POST",
+                                                                body: formData
+                                                            }).then(response => {
+                                                                if (response.ok) {
+                                                                    sap.m.MessageToast.show("Foto subida al servidor correctamente.");
+                                                                    // Marcar como sincronizada
+                                                                    capturedFile.synced = true;
+                                                                } else {
+                                                                    throw new Error("Error en la respuesta del servidor");
+                                                                }
+                                                            }).catch(error => {
+                                                                console.error("Error al subir foto:", error);
+                                                                sap.m.MessageToast.show("Error al subir foto. Guardando offline...");
+                                                                
+                                                                // Si falla la subida, guardar offline
+                                                                sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                                                                                                                                            let reader = new FileReader();
+                                                                        reader.onloadend = function () {
+                                                                            let base64 = reader.result.split(',')[1];
+                                                                            let sMBLRN = that.sObjMBLRN || "TEMP_" + Date.now();
+                                                                            indexedDBService.saveImage({
+                                                                            MBLRN: sMBLRN,
+                                                                            LINE_ID: sPosition,
+                                                                            IMAGE_NAME: capturedFile.name,
+                                                                            data: base64,
+                                                                            mimeType: capturedFile.type,
+                                                                            pending: true,
+                                                                            timestamp: Date.now(),
+                                                                            index: index
+                                                                        });
+                                                                    };
+                                                                    reader.readAsDataURL(capturedFile);
+                                                                });
+                                                            });
+                                                        } catch (error) {
+                                                            console.error("Error en modo online:", error);
+                                                            sap.m.MessageToast.show("Error en modo online. Guardando offline...");
+                                                        }
+                                                    }
+
+                                                    sap.m.MessageToast.show("Foto capturada correctamente.");
+
+                                                    // Detén la cámara para liberar recursos
+                                                    if (video.srcObject) {
+                                                        video.srcObject.getTracks().forEach(t => t.stop());
+                                                    }
+
+                                                    oCamDialog.close();
+                                                    oCamDialog.destroy();
+                                                }, 'image/jpeg', 0.9);
+                                            }
+                                        }
+                                    })
+                                ]
+                            }),
+                            new sap.m.HBox({
+                                alignItems: "Center",
+                                justifyContent: "Center",
+                                items: [
+                                    new sap.ui.core.HTML({
+                                        content: '<video id="camera-video" autoplay style="width: 100%; max-width: 400px; border: 1px solid #ccc;"></video>'
+                                    })
+                                ]
+                            })
+                        ]
+                    })
+                ],
+                buttons: [
+                    new sap.m.Button({
+                        text: "Cancelar",
+                        press: function () {
+                            if (video.srcObject) {
+                                video.srcObject.getTracks().forEach(t => t.stop());
+                            }
+                            oCamDialog.close();
+                            oCamDialog.destroy();
+                        }
+                    })
+                ]
+            });
+
+            // Inicializar cámara cuando se abra el diálogo
+            oCamDialog.attachAfterOpen(function () {
+                var video = document.getElementById('camera-video');
+                if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                    navigator.mediaDevices.getUserMedia({ video: true })
+                        .then(function (stream) {
+                            video.srcObject = stream;
+                        })
+                        .catch(function (err) {
+                            console.error("Error al acceder a la cámara:", err);
+                            sap.m.MessageToast.show("Error al acceder a la cámara");
+                        });
+                } else {
+                    sap.m.MessageToast.show("Cámara no disponible en este dispositivo");
+                }
+            });
+
+            this.getView().addDependent(oCamDialog);
+            oCamDialog.open();
+        },
+        */
 
         /*
         onSelectPhoto: function () {
@@ -5756,6 +6376,10 @@ sap.ui.define([
         },
         */
 
+        // ❌ MÉTODO COMENTADO - NO SE UTILIZA EN LA INTERFAZ
+        // RAZÓN: Funcionalidad duplicada con onFileUploaderChange
+        // Se mantiene comentado por si se necesita en el futuro, pero no está conectado a ningún botón
+        /*
         onSelectPhoto: function () {
             var that = this;
             var sFragmentId = this.createId("myDialog");
@@ -5768,18 +6392,45 @@ sap.ui.define([
             navigator.camera.getPicture(
                 function (imageURI) {
                     window.resolveLocalFileSystemURL(imageURI, function (fileEntry) {
-                        // Guarda solo el fileEntry, no el file directamente
-                        that._aImageSource.push({
-                            pos: sPosition,
-                            src: imageURI,
-                            fileEntry: fileEntry,
-                            filename: fileEntry.name,
-                            ind: "n", // nueva imagen
-                            index: iIndex,
-                            source: "gallery"
-                        });
+                        fileEntry.file(function (realFile) {
+                            var reader = new FileReader();
+                            reader.onloadend = function (e) {
+                                var base64 = e.target.result;
+                                
+                                // 1. Agregar a la vista local
+                                that._aImageSource.push({
+                                    pos: sPosition,
+                                    src: base64,
+                                    fileEntry: fileEntry,
+                                    filename: realFile.name,
+                                    ind: "n", // nueva imagen
+                                    index: iIndex,
+                                    source: "gallery"
+                                });
 
-                        sap.m.MessageToast.show("Imagen agregada: " + fileEntry.name);
+                                // 2. Guardar en IndexedDB si offline
+                                if (!window.navigator.onLine) {
+                                    sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                                        let sMBLRN = that.sObjMBLRN || "TEMP_" + Date.now();
+                                        indexedDBService.saveImage({
+                                            MBLRN: sMBLRN,
+                                            LINE_ID: sPosition,
+                                            IMAGE_NAME: realFile.name,
+                                            data: base64.split(',')[1],
+                                            mimeType: realFile.type,
+                                            pending: true,
+                                            timestamp: Date.now(),
+                                            index: iIndex
+                                        });
+                                    });
+                                }
+
+                                sap.m.MessageToast.show("Imagen agregada: " + realFile.name);
+                            };
+                            reader.readAsDataURL(realFile);
+                        }, function (err) {
+                            console.error("Error al leer archivo:", err);
+                        });
                     }, function (err) {
                         console.error("Error al resolver la URI:", err);
                     });
@@ -5797,6 +6448,7 @@ sap.ui.define([
                 }
             );
         },
+        */
 
 
         _onAddImage: function (that, oImage) {
@@ -6678,6 +7330,310 @@ sap.ui.define([
             } else {
                 return "";
             }
+        },
+
+        // Offline - File Uploader con soporte offline
+        onFileUploaderChange: function (oEvent) {
+            var files = oEvent.getParameter("files");
+            var sFragmentId = this.createId("myDialog");
+            var oDialog = sap.ui.core.Fragment.byId(sFragmentId, "myDialog");
+            var oPreview = sap.ui.core.Fragment.byId(sFragmentId, "idPhotoPreview");
+            var sTitle = oDialog.getTitle();
+            var sTitlePos = oBuni18n.getText("titlePos") + " ";
+            var sPosition = sTitle.split(sTitlePos)[1];
+            var index = this.getIndexByPos(sPosition);
+
+            if (files && files.length > 0) {
+                var file = files[0];
+                var reader = new FileReader();
+                reader.onload = function (e) {
+                    var base64 = e.target.result;
+
+                    this._aImageSource.push({
+                        pos: sPosition,
+                        src: base64,
+                        file: file,
+                        filename: file.name,
+                        ind: 'n',
+                        index: index,
+                        source: "upload"
+                    });
+
+                    // Guardar en IndexedDB si offline
+                    if (!window.navigator.onLine) {
+                        sap.ui.require(["com/xcaret/regactivosfijosoff/model/indexedDBService"], function (indexedDBService) {
+                            let sMBLRN = this.sObjMBLRN || "TEMP_" + Date.now();
+                            indexedDBService.saveImage({
+                                MBLRN: sMBLRN,
+                                LINE_ID: sPosition,
+                                IMAGE_NAME: file.name,
+                                IMAGE_TYPE: "UPLOAD",
+                                data: base64.split(',')[1],
+                                mimeType: file.type,
+                                pending: true,
+                                timestamp: Date.now(),
+                                index: index
+                            });
+                        }.bind(this));
+                    }
+
+                    // MOSTRAR PREVIEW
+                    if (oPreview) {
+                        oPreview.setSrc(base64);
+                        oPreview.setVisible(true);
+                    }
+
+                    sap.m.MessageToast.show("Imagen agregada correctamente.");
+                }.bind(this);
+                reader.readAsDataURL(file);
+            }
+        },
+
+        // ✅ CARRUSEL DE FOTOS - VISUALIZACIÓN DE ACTIVOS
+        onSeePhotoActFijo: function () {
+            // Verificar si está en modo offline
+            if (!window.navigator.onLine) {
+                var i18 = this.getOwnerComponent().getModel("i18n").getResourceBundle();
+                sap.m.MessageToast.show(i18.getText("SEEPHOTO") + " - Función solo disponible en modo online");
+                return;
+            }
+
+            var that = this;
+            var sFragmentId = this.createId("myDialog");
+            var oDialog = sap.ui.core.Fragment.byId(sFragmentId, "myDialog");
+            var sTitle = oDialog.getTitle();
+            var sTitlePos = oBuni18n.getText("titlePos") + " ";
+            var sPosition = sTitle.split(sTitlePos)[1];
+            
+            // ✅ CORREGIR: Extraer solo la posición final (después del "/")
+            if (sPosition && sPosition.includes("/")) {
+                sPosition = sPosition.split("/")[1].trim();
+            }
+            
+            console.log("🔍 onSeePhotoActFijo - Título completo:", sTitle);
+            console.log("🔍 onSeePhotoActFijo - Título posición:", sTitlePos);
+            console.log("🔍 onSeePhotoActFijo - Posición extraída:", sPosition);
+            
+            // ✅ CONSULTAR IMÁGENES DEL SERVIDOR
+            this._loadImagesFromServer(sPosition, "ACTIVO_FIJO").then(function(aImages) {
+                if (aImages && aImages.length > 0) {
+                    var oCarousel = that.getCarousel();
+                    var oModel = that.getCarouselModel(aImages);
+                    var aData = oModel.getData();
+                    var bDelVisible = aData.length > 0;
+                    
+                    var i18 = that.getOwnerComponent().getModel("i18n").getResourceBundle();
+                    var sTitle = oBuni18n.getText("SEEPHOTO") + " - Activos Fijos";
+                    
+                    that.oPicDialog = new sap.m.Dialog({
+                        title: sTitle,
+                        verticalScrolling: false,
+                        stretch: true,
+                        content: [oCarousel],
+                        /*
+                        beginButton: new sap.m.Button({
+                            text: i18.getText("DELETEPHOTO"),
+                            type: "Reject",
+                            visible: bDelVisible,
+                            enabled: true,
+                            press: function (oEvent) {
+                                that.onDeletePic(oEvent);
+                                that.oPicDialog.close();
+                            }
+                        }),
+                        */
+                        endButton: new sap.m.Button({
+                            text: i18.getText("closeBtn"),
+                            press: function () {
+                                that.oPicDialog.close();
+                            }
+                        })
+                    });
+
+                    that.oPicDialog.getContent()[0].setModel(oModel);
+                    that.oPicDialog.open();
+                } else {
+                    sap.m.MessageToast.show("No hay fotos de activos fijos para mostrar.");
+                }
+            }).catch(function(error) {
+                console.error("Error al cargar imágenes:", error);
+                sap.m.MessageToast.show("Error al cargar las imágenes del servidor.");
+            });
+        },
+
+        // ✅ CARRUSEL DE FOTOS - VISUALIZACIÓN DE SERIE
+        onSeePhotoSerie: function () {
+            // Verificar si está en modo offline
+            if (!window.navigator.onLine) {
+                var i18 = this.getOwnerComponent().getModel("i18n").getResourceBundle();
+                sap.m.MessageToast.show(i18.getText("SEEPHOTO") + " - Función solo disponible en modo online");
+                return;
+            }
+
+            var that = this;
+            var sFragmentId = this.createId("myDialog");
+            var oDialog = sap.ui.core.Fragment.byId(sFragmentId, "myDialog");
+            var sTitle = oDialog.getTitle();
+            var sTitlePos = oBuni18n.getText("titlePos") + " ";
+            var sPosition = sTitle.split(sTitlePos)[1];
+            
+            // ✅ CORREGIR: Extraer solo la posición final (después del "/")
+            if (sPosition && sPosition.includes("/")) {
+                sPosition = sPosition.split("/")[1].trim();
+            }
+            
+            console.log("🔍 onSeePhotoSerie - Título completo:", sTitle);
+            console.log("🔍 onSeePhotoSerie - Título posición:", sTitlePos);
+            console.log("🔍 onSeePhotoSerie - Posición extraída:", sPosition);
+            
+            // ✅ CONSULTAR IMÁGENES DEL SERVIDOR
+            this._loadImagesFromServer(sPosition, "SERIE").then(function(aImages) {
+                if (aImages && aImages.length > 0) {
+                    var oCarousel = that.getCarousel();
+                    var oModel = that.getCarouselModel(aImages);
+                    var aData = oModel.getData();
+                    var bDelVisible = aData.length > 0;
+                    
+                    var i18 = that.getOwnerComponent().getModel("i18n").getResourceBundle();
+                    var sTitle = oBuni18n.getText("SEEPHOTO") + " - Números de Serie";
+                    
+                    that.oPicDialog = new sap.m.Dialog({
+                        title: sTitle,
+                        verticalScrolling: false,
+                        stretch: true,
+                        content: [oCarousel],
+                        /*
+                        beginButton: new sap.m.Button({
+                            text: i18.getText("DELETEPHOTO"),
+                            type: "Reject",
+                            visible: bDelVisible,
+                            enabled: true,
+                            press: function (oEvent) {
+                                that.onDeletePic(oEvent);
+                                that.oPicDialog.close();
+                            }
+                        }),
+                        */
+                        endButton: new sap.m.Button({
+                            text: i18.getText("closeBtn"),
+                            press: function () {
+                                that.oPicDialog.close();
+                            }
+                        })
+                    });
+
+                    that.oPicDialog.getContent()[0].setModel(oModel);
+                    that.oPicDialog.open();
+                } else {
+                    sap.m.MessageToast.show("No hay fotos de números de serie para mostrar.");
+                }
+            }).catch(function(error) {
+                console.error("Error al cargar imágenes:", error);
+                sap.m.MessageToast.show("Error al cargar las imágenes del servidor.");
+            });
+        },
+
+        // ✅ CARRUSEL PRINCIPAL
+        getCarousel: function () {
+            var oCarousel = new sap.m.Carousel({
+                loop: true,
+                pages: {
+                    path: "/",
+                    template: new sap.m.Image({
+                        src: "{src}",
+                        alt: "{filename}",
+                    })
+                }
+            }).addStyleClass("sapUiContentPadding");
+            return oCarousel;
+        },
+
+        // ✅ MODELO DEL CARRUSEL
+        getCarouselModel: function (aImages) {
+            var oModel = new sap.ui.model.json.JSONModel(aImages);
+            return oModel;
+        },
+
+        // ✅ CARGA IMÁGENES DEL SERVIDOR
+        _loadImagesFromServer: function (sPosition, sImageType) {
+            var that = this;
+            var oDeferred = new jQuery.Deferred();
+            
+            console.log("🔍 _loadImagesFromServer - sObjMBLRN:", this.sObjMBLRN);
+            
+            if (!this.sObjMBLRN) {
+                oDeferred.reject("No hay MBLRN disponible");
+                return oDeferred.promise();
+            }
+
+            // ✅ CONSULTAR API DEL SERVIDOR
+            var sUrl = host + "/ImageMaterialReceptionItem/" + this.sObjMBLRN;
+            console.log("🔍 Consultando URL:", sUrl);
+            console.log("🔍 Posición:", sPosition);
+            console.log("🔍 Tipo de imagen:", sImageType);
+            
+            fetch(sUrl)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error("Error en la respuesta del servidor");
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log("📊 Datos recibidos del servidor:", data);
+                    
+                    if (data && data.images && Array.isArray(data.images)) {
+                        console.log("📸 Total de imágenes recibidas:", data.images.length);
+                        
+                        // ✅ FILTRAR POR POSICIÓN Y TIPO DE IMAGEN
+                        var aFilteredImages = data.images.filter(function(img) {
+                            var bMatchPosition = img.LINE_ID === sPosition;
+                            var bMatchType = img.IMAGE_NAME && img.IMAGE_NAME.toUpperCase().includes(sImageType.toUpperCase());
+                            
+                            console.log("🔍 Imagen:", img.IMAGE_NAME, "| Posición:", img.LINE_ID, "| Tipo:", sImageType);
+                            console.log("🔍 Coincide posición:", bMatchPosition, "| Coincide tipo:", bMatchType);
+                            
+                            return bMatchPosition && bMatchType;
+                        });
+
+                        console.log("✅ Imágenes filtradas:", aFilteredImages.length);
+                        console.log("📸 Imágenes filtradas:", aFilteredImages);
+
+                        // ✅ CONVERTIR A FORMATO DEL CARRUSEL
+                        var aCarouselImages = aFilteredImages.map(function(img) {
+                            return {
+                                pos: img.LINE_ID,
+                                filename: img.IMAGE_NAME,
+                                src: "data:" + img.mimeType + ";base64," + img.data,
+                                index: img.INDEX,
+                                mimeType: img.mimeType
+                            };
+                        });
+
+                        // ✅ ORDENAR POR ÍNDICE (más reciente primero)
+                        aCarouselImages.sort(function(a, b) {
+                            return parseInt(b.index) - parseInt(a.index);
+                        });
+
+                        console.log("🎠 Imágenes del carrusel:", aCarouselImages);
+                        oDeferred.resolve(aCarouselImages);
+                    } else {
+                        console.log("❌ No hay datos de imágenes válidos");
+                        oDeferred.resolve([]);
+                    }
+                })
+                .catch(error => {
+                    console.error("❌ Error al cargar imágenes:", error);
+                    oDeferred.reject(error);
+                });
+
+            return oDeferred.promise();
+        },
+
+        // ✅ ELIMINAR FOTO (placeholder)
+        onDeletePic: function (oEvent) {
+            // TODO: Implementar eliminación de fotos
+            sap.m.MessageToast.show("Función de eliminación en desarrollo");
         }
 
     });

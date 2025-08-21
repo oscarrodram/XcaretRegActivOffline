@@ -8,8 +8,10 @@ sap.ui.define([
     "sap/m/MessageBox",
     "sap/ui/comp/smartvariants/PersonalizableInfo",
     "sap/ui/core/BusyIndicator",
-    "com/xcaret/regactivosfijosoff/model/indexedDBService"
-], (Controller, Dialog, Label, Button, Input, Switch, MessageBox, PersonalizableInfo, BusyIndicator, indexedDBService) => {
+    "com/xcaret/regactivosfijosoff/model/indexedDBService",
+    "com/xcaret/regactivosfijosoff/utils/Services",
+    "com/xcaret/regactivosfijosoff/utils/Users"
+], (Controller, Dialog, Label, Button, Input, Switch, MessageBox, PersonalizableInfo, BusyIndicator, indexedDBService, Services, Users) => {
     "use strict";
     var vInitialDate, vFinalDate, currentDate = new Date();
     let sUserID = "DEFAULT_USER", sFName, sLName, sEmail;
@@ -18,6 +20,8 @@ sap.ui.define([
     let aIdEBELN = [], aIdPSPNR = [], aIdCONTRA = [], aIdUSER = [];
     var oSkip = 0, oTop = 10;
     var sSelectedTab = "All";
+    // Nuevo código 
+    var noMoreData = false;
     return Controller.extend("com.xcaret.regactivosfijosoff.controller.Main", {
         onInit: function () {
 
@@ -38,6 +42,11 @@ sap.ui.define([
             this.onCalculateDatesBefore(60);
             let oModel = new sap.ui.model.json.JSONModel();
             this.getView().setModel(oModel, "serviceModel");
+            
+            // --- GESTIÓN DE SESIONES: LIMPIEZA AL INICIAR LA VISTA PRINCIPAL ---
+            // Mover la limpieza de sesiones a una función separada para evitar bloqueo
+            this._cleanupUserSessions();
+            
             this.multiQuery();
 
             this.oSmartVariantManagement = this.getView().byId("svm");
@@ -546,24 +555,38 @@ sap.ui.define([
             }
         },
 
-        onInitialMainPage: function () {
+        onInitialMainPage: async function () {
+            console.log("Se ejecuta oninitialmainpage")
+            try {
+                const deleteResult = await Services.DeleteAllSessions();
+                if (deleteResult && deleteResult !== "Error") {
+                    console.log("✅ Sesiones inactivas limpiadas exitosamente");
+                } else {
+                    console.warn("⚠️ Advertencia al limpiar sesiones inactivas:", deleteResult);
+                }
+            } catch (e) {
+                console.error("❌ Error limpiando sesiones inactivas:", e);
+            }
+            
             BusyIndicator.hide();
             oSkip = 0;
             this.iTotalItems = null;
             this.bIsLoading = false;
+            // Nuevó código 
+            noMoreData = false; 
             let oModel = this.getView().getModel("serviceModel");
             oModel.setProperty("/generalData", []);
             this.onGetGeneralData();
         },
 
         onUpdateStarted: function (oEvent) {
-            const oTable = this.byId("progrAlmacenTable");
-            const iDisplayedItems = oTable.getItems().length;
+            if (noMoreData) return; // 🚨 Impide seguir cargando si ya no hay más datos
+        
             const sReason = oEvent.getParameter("reason");
-            if (sReason === "Growing" && !this.bIsLoading && (this.iTotalItems === null || oSkip + oTop <= this.iTotalItems)) {
+            if (sReason === "Growing" && !this.bIsLoading) { // Solo growing y si no hay carga en curso
                 this.bIsLoading = true;
-                oSkip += oTop;
-                this.onGetGeneralData(true); // Obtener más datos
+                oSkip += oTop; // Avanza el paginador
+                this.onGetGeneralData(true); // Pide más datos en modo append
             }
         },
 
@@ -1000,12 +1023,28 @@ sap.ui.define([
                             const aUpdatedData = bAppend ? aCurrentData.concat(responseData.result) : responseData.result;
                             this.onUpdateFinishedTable(aUpdatedData.length);
                             oModel.setProperty("/generalData", await this._getFormatData(aUpdatedData));
+                            
+                            // ========= 4. LÓGICA DE PAGINACIÓN INTELIGENTE (MODO ONLINE) =========
+                            if (bAppend) {
+                                // Modo append (growing): verifica si hay más datos
+                                noMoreData = (responseData.result.length < oTop);
+                            } else {
+                                // Modo búsqueda nueva: siempre permite growing inicialmente
+                                noMoreData = (responseData.result.length < oTop);
+                            }
+                            // ========= FIN LÓGICA DE PAGINACIÓN =========
+                            
                             oController.bIsLoading = false;
                         } else {
                             const aDataResult = [];
                             this.onUpdateFinishedTable(aDataResult.length);
                             oModel.setProperty("/generalData", aDataResult);
                             oController.iTotalItems = aDataResult.length;
+                            
+                            // ========= LÓGICA DE PAGINACIÓN EN CASO DE ERROR =========
+                            noMoreData = false; // Permite reintentar en caso de error
+                            // ========= FIN LÓGICA DE PAGINACIÓN =========
+                            
                             oController.bIsLoading = false;
                             sap.m.MessageToast.show(responseData.error);
                         }
@@ -1340,7 +1379,9 @@ sap.ui.define([
                     `${host}/User`,
                     `${host}/Rol?$filter=ID EQ 007 AND EMAIL EQ '${sEmail}'`,
                     `${host}/Projects/Project/query?&ID_STA=1`,
-                    `${host}/Contract`
+                    `${host}/Contract`,
+                    // Nuevo código
+                    `${host}/ScheduleLine?$filter=(RE_TYPE%20EQ%20%271%27)%20AND%20(CREATED_AT%20BETWEEN%20%272025-06-02%27%20AND%20%272025-08-01%27)`
 
                 ];
 
@@ -1366,6 +1407,12 @@ sap.ui.define([
                 if ([responses[2].result].every(val => val?.length !== 0)) { this.validateRol(responses[2].result); }
                 oModel.setProperty("/generalProjects", responses[3].data);
                 oModel.setProperty("/generalContract", responses[4].result);
+                // Extrae EBELN únicos (por si hay repetidos)
+                let scheduleLines = responses[5].result || [];
+                let uniqueEbeln = Array.from(new Set(scheduleLines.map(item => item.EBELN)));
+                let uniqueEbelnObjects = uniqueEbeln.map(ebeln => ({ EBELN: ebeln }));
+
+                oModel.setProperty("/generalEBELNCatalog", uniqueEbelnObjects);
                 //this.showUserDialog();
             } catch (error) {
                 console.error(error);
@@ -1414,7 +1461,7 @@ sap.ui.define([
             if (id.includes("IdEBELN")) {
                 filterId = "EBELN";
                 filterDescr = "EBELN";
-                aData = oModel.getProperty("/generalData") || [];
+                aData = oModel.getProperty("/generalEBELNCatalog") || [];
                 title = i18.getText("EBELN");
 
             } else if (id.includes("IdPSPNR")) {
@@ -1503,6 +1550,22 @@ sap.ui.define([
                                 aIdUSER.push(textAdded);
                             }
                         });
+
+                        // --- Sincroniza el array de filtros con los tokens actuales ---
+                        switch (shortId) {
+                            case "IdEBELN":
+                                aIdEBELN = this._oMultiInput.getTokens().map(token => token.getKey());
+                                break;
+                            case "IdPSPNR":
+                                aIdPSPNR = this._oMultiInput.getTokens().map(token => token.getKey());
+                                break;
+                            case "ID_CON":
+                                aIdCONTRA = this._oMultiInput.getTokens().map(token => token.getKey());
+                                break;
+                            case "IdUSER":
+                                aIdUSER = this._oMultiInput.getTokens().map(token => token.getKey());
+                                break;
+                        }
 
                         this._oSelectDialog.destroy();
                         this._oSelectDialog = null;
@@ -1669,7 +1732,7 @@ sap.ui.define([
                 var oVariantData = JSON.parse(sSavedVariant);
                 this.getView().byId("IdEBELN").setTokens(oVariantData.filterData.IdEBELN.map(value => new sap.m.Token({ key: value.key, text: value.text })));
                 this.getView().byId("IdPSPNR").setTokens(oVariantData.filterData.IdPSPNR.map(value => new sap.m.Token({ key: value.key, text: value.text })));
-                this.getView().byId("ID_CON").setTokens(oVariantData.filterData.IdBANFN.map(value => new sap.m.Token({ key: value.key, text: value.text })));
+                this.getView().byId("ID_CON").setTokens(oVariantData.filterData.ID_CON.map(value => new sap.m.Token({ key: value.key, text: value.text })));
                 this.getView().byId("IdUSER").setTokens(oVariantData.filterData.IdUSER.map(value => new sap.m.Token({ key: value.key, text: value.text })));
                 this._applyTableSettings(oVariantData.tableSettings);
             }
@@ -1719,9 +1782,9 @@ sap.ui.define([
             var sSavedVariant = localStorage.getItem("PROG_ALMACEN_VARIANT_" + sNewVariantId);
             if (sSavedVariant) {
                 var oVariantData = JSON.parse(sSavedVariant);
-                this.getView().byId("IdEBELN").setTokens(oVariantData.filterData.IdLIFNR.map(value => new sap.m.Token({ key: value.key, text: value.text })));
+                this.getView().byId("IdEBELN").setTokens(oVariantData.filterData.IdEBELN.map(value => new sap.m.Token({ key: value.key, text: value.text })));
                 this.getView().byId("IdPSPNR").setTokens(oVariantData.filterData.IdPSPNR.map(value => new sap.m.Token({ key: value.key, text: value.text })));
-                this.getView().byId("ID_CON").setTokens(oVariantData.filterData.IdEBELN.map(value => new sap.m.Token({ key: value.key, text: value.text })));
+                this.getView().byId("ID_CON").setTokens(oVariantData.filterData.ID_CON.map(value => new sap.m.Token({ key: value.key, text: value.text })));
                 this.getView().byId("IdUSER").setTokens(oVariantData.filterData.IdUSER.map(value => new sap.m.Token({ key: value.key, text: value.text })));
                 this._applyTableSettings(oVariantData.tableSettings);
                 //MessageToast.show("Page Variant Loaded!");
@@ -1756,6 +1819,18 @@ sap.ui.define([
         },
         //##########End Variant
         //##########
+        
+        // Nuevo código
+        // Asigna array vacío en el caso de ser undefined
+        validateRol: function (aJsonRol) {
+
+            (Array.isArray(aJsonRol) ? aJsonRol : []).forEach((oItem) => {
+                if (oItem.CREATE === "X") {
+                    //this.getView().byId("idBtnCreate").setVisible(true);
+                }
+            });
+        },
+        
         // Initial Navigations ######################### Create, Copy & Read ----- #########################
         // 
         navigateToCreate: function () {
@@ -1812,6 +1887,20 @@ sap.ui.define([
         // End Navigations ######################### Create, Copy & Read ----- #########################
         //////////////////////////////////////////////////
         /////////////////////////////////////////////////
+
+        // Función auxiliar para limpiar sesiones del usuario
+        _cleanupUserSessions: function () {
+            // Ejecutar la limpieza de sesiones de manera asíncrona sin bloquear onInit
+            Services.DeleteUserSessions().then(deleteResult => {
+                if (deleteResult && deleteResult !== "Error") {
+                    console.log("✅ Sesiones del usuario limpiadas exitosamente");
+                } else {
+                    console.warn("⚠️ Advertencia al limpiar sesiones del usuario:", deleteResult);
+                }
+            }).catch(e => {
+                console.error("❌ Error limpiando sesiones del usuario:", e);
+            });
+        },
 
     });
 });

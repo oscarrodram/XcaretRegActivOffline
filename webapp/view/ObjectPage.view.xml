@@ -245,8 +245,8 @@
                         }"
                     noDataText="{i18n>tableNoDataText}"
                     busyIndicatorDelay="{serviceModel>/tableBusyDelay}"
-                    growing="true"
-					growingScrollToLoad="true" growingThreshold="5" mode="MultiSelect" selectionChange="onSelectionChange"
+                    growing="false"
+					growingScrollToLoad="true" growingThreshold="100" mode="MultiSelect" selectionChange="onSelectionChange"
                     >
 					<headerToolbar>
                         <OverflowToolbar>
@@ -438,14 +438,23 @@
     </layout:sections>
     <ux:footer>
 			<OverflowToolbar id="editOverFlowToolbar" visible="true">
-			    <Button id="messagePopoverBtn"
+			    <!-- Session Management MessageStrip -->
+                <MessageStrip
+                    id="idMessageStrip"
+                    text="{globalModel>/messageStripText}"
+                    type="Information"
+                    showIcon="true"
+                    visible="{= !!${globalModel>/messageStripText} }"
+                    class="sapUiTinyMarginTop" />
+                <ToolbarSpacer/>
+                
+                <Button id="messagePopoverBtn"
 				    visible="false"
 					icon= "sap-icon://error"
 					type= "Negative"
 					text= "{i18n>errLog}"
 					press=".handleMessagePopoverPress"
 					ariaHasPopup="Dialog"/>
-				<ToolbarSpacer/>
 				
                 <Button id="idBtnSave" text="{i18n>save}" press="_create" icon="sap-icon://save" type="Accept" visible="false" enabled="{globalModel>/enabled}" />
                 <Button id="idBtnCancel" text="{i18n>cancel}" press="onCancelEdit" icon="sap-icon://cancel" type="Reject" visible="false" enabled="{globalModel>/enabled}" />

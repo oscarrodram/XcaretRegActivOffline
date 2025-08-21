@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Test - Gestión de Sesiones</title>
+    <script src="https://sdk.openui5.org/resources/sap-ui-core.js"
+        data-sap-ui-theme="sap_fiori_3"
+        data-sap-ui-resourceroots='{
+            "com.xcaret.regactivosfijosoff": "./"
+        }'
+        data-sap-ui-compatVersion="edge"
+        data-sap-ui-async="true"
+        data-sap-ui-frameOptions="trusted"
+        data-sap-ui-oninit="module:sap/ui/core/ComponentSupport">
+    </script>
+</head>
+<body class="sapUiBody">
+    <div id="content"></div>
+    
+    <script>
+        // Test de funcionalidad de sesiones
+        console.log("🧪 Iniciando pruebas de gestión de sesiones...");
+        
+        // Verificar que los servicios estén disponibles
+        sap.ui.require([
+            "com/xcaret/regactivosfijosoff/utils/Services",
+            "com/xcaret/regactivosfijosoff/utils/Users",
+            "com/xcaret/regactivosfijosoff/utils/Json"
+        ], function(Services, Users, Json) {
+            console.log("✅ Servicios cargados correctamente");
+            console.log("🔍 Services:", Services);
+            console.log("🔍 Users:", Users);
+            console.log("🔍 Json:", Json);
+            
+            // Test de creación de sesión
+            const testDocumentId = "TEST_DOC_001";
+            const sessionData = Json.CreateSession(null, testDocumentId);
+            console.log("📋 Datos de sesión de prueba:", sessionData);
+            
+            // Test de información de usuario
+            const userInfo = Users.getUserInfo();
+            console.log("👤 Información de usuario:", userInfo);
+            
+            console.log("🎉 Pruebas de gestión de sesiones completadas");
+        });
+    </script>
+</body>
+</html>

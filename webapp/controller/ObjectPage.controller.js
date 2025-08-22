@@ -5899,12 +5899,11 @@ sap.ui.define([
         hideFormDetail: function (oLink, bVisible) {
             var sFragmentId = this.createId("myDialog");
             var oHBOXDetail = sap.ui.core.Fragment.byId(sFragmentId, "idMoreDetails");
-            // Ariel Piedra
-            //oHBOXDetail.setVisible(!bVisible);
+            oHBOXDetail.setVisible(!bVisible);
             if (!bVisible) {
-            //    oLink.setText(oBuni18n.getText("hideDetail"));
+                oLink.setText(oBuni18n.getText("hideDetail"));
             } else {
-            //    oLink.setText(oBuni18n.getText("moreDetail"));
+                oLink.setText(oBuni18n.getText("moreDetail"));
             }
         },
 

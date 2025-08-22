@@ -245,8 +245,8 @@
                         }"
                     noDataText="{i18n>tableNoDataText}"
                     busyIndicatorDelay="{serviceModel>/tableBusyDelay}"
-                    growing="false"
-					growingScrollToLoad="true" growingThreshold="100" mode="MultiSelect" selectionChange="onSelectionChange"
+                    growing="true"
+					growingScrollToLoad="true" growingThreshold="5" mode="MultiSelect" selectionChange="onSelectionChange"
                     >
 					<headerToolbar>
                         <OverflowToolbar>
